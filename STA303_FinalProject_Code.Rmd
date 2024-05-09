@@ -1,0 +1,363 @@
+---
+title: "STA303_FinalProject"
+author: "Robin Mao"
+date: "2024-03-15"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loading Libraries
+```{R}
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+```
+
+## Loading Datasets
+```{r}
+# Global mortality time series
+global_mortality = read.csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_global.csv")
+
+# Mortality time series in the US
+us_mortality = read.csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv")
+
+# Population count
+population = read.csv("Population.csv")
+
+# GDP
+gdp = read.csv("GDP.csv")
+
+# GDP per Capita
+gdppp = read.csv("GDPPerCapita.csv")
+
+# Unemployment rate
+unemploymentRate = read.csv("UnemploymentRate.csv")
+
+# Inflation Rate
+inflationRate = read.csv("InflationRate.csv")
+
+# Geo data
+geo = read.csv("https://gist.githubusercontent.com/tadast/8827699/raw/61b2107766d6fd51e2bd02d9f78f6be081340efc/countries_codes_and_coordinates.csv")
+```
+
+Merge & Clean
+```{r}
+# clean and aggregate the us_mortality dataset
+us_mortality <- subset(us_mortality, select = -c(UID, iso2, iso3, code3, FIPS, Admin2, Province_State, Country_Region, Lat, Long_, Combined_Key, Population))
+# SUM
+us_mortality <- colSums(us_mortality)
+# clean and aggregate the global_mortality dataset using
+global_mortality <- subset(global_mortality, select = -c(Lat, Long, Province.State))
+# SUM and GROUP BY
+global_mortality <- global_mortality %>%
+  group_by(Country.Region) %>%
+  summarise(across(where(is.numeric), sum, na.rm = TRUE))
+# pharse the us_mortality relation
+us_mortality <- data.frame(us_mortality)
+us_mortality <- t(us_mortality)
+us_mortality <- as.data.frame(us_mortality)
+us_name <- data.frame(
+  "Country.Region"="United States"
+)
+us_mortality <- cbind(us_name, us_mortality)
+global_mortality <- rbind(global_mortality,us_mortality)
+
+# inner join
+population <- subset(population, select = c(Country.Name, Country.Code, X2022))
+df <- population %>%
+  inner_join(global_mortality, by = c("Country.Name" = "Country.Region"))
+df <- df %>% rename("Population" = X2022)
+
+# innner join population
+population <- subset(population, select = c(Country.Name, Country.Code, X2022))
+df <- population %>%
+  inner_join(global_mortality, by = c("Country.Name" = "Country.Region"))
+df <- df %>% rename("Population" = X2022)
+
+# inner join GDP
+gdp <- subset(gdp, select = c(Country.Code, X2022))
+df <- gdp %>%
+  inner_join(df, by = c("Country.Code" = "Country.Code"))
+df <- df %>% rename("GDP" = X2022)
+
+# inner join GDP per capita
+gdppp <- subset(gdppp, select = c(Country.Code, X2022))
+df <- gdppp %>%
+  inner_join(df, by = c("Country.Code" = "Country.Code"))
+df <- df %>% rename("GDPperCapita" = X2022)
+
+# inner join Unemployment Rate
+unemploymentRate <- subset(unemploymentRate, select = c(Country.Code,X2022))
+df <- unemploymentRate %>%
+  inner_join(df, by = c("Country.Code" = "Country.Code"))
+df <- df %>% rename("UnemploymentRate" = X2022)
+
+# inner join inflation rate
+inflationRate <- subset(inflationRate, select = c(Country.Code, X2022))
+df <- inflationRate %>%
+  inner_join(df, by = c("Country.Code" = "Country.Code"))
+df <- df %>% rename("InflationRate" = X2022)
+
+geo <- subset(geo, select = c("Country", "Latitude..average.", "Longitude..average."))
+df <- inner_join(geo, df, by = c("Country" = "Country.Name"))
+df <- df %>% rename("Lat" = "Latitude..average.")
+df <- df %>% rename("Long" = "Longitude..average.")
+df <- drop_na(df)
+```
+
+Histograms
+```{r}
+par(mfrow = c(3, 2))
+hist(log(df$InflationRate), ylim = c(0, 30))
+hist(log(df$UnemploymentRate))
+hist(log(df$GDPperCapita))
+hist(log(df$GDP), ylim = c(0, 70))
+hist(log(df$Population), ylim = c(0, 30))
+```
+Corrplot
+```{r}
+install.packages("corrplot")
+library(corrplot)
+dfcorr <- subset(df, select = c(InflationRate, UnemploymentRate, GDPperCapita, GDP, Population))
+pairs(dfcorr)
+matrix <- cor(dfcorr)
+corrplot(matrix, method = "circle")
+```
+
+Time series
+```{r}
+# get the time series of the ith tuple of df
+get_timeseries <- function(df, i) {
+  res <- subset(df[i, ], select = -c(Country, Lat, Long, Country.Code, InflationRate, UnemploymentRate, GDPperCapita, GDP, Population))
+  res <- sapply(res, function(x) as.numeric(x[1]))
+  
+  # rename the columns
+  cleaned_col_names <- sub("X", "", names(res))
+  date_col_names <- as.Date(cleaned_col_names, format = "%m.%d.%y")
+  names(res) <- date_col_names
+  
+  return(res)
+}
+
+# plot the time series of the ith tuple of df
+plot_timeseries <- function(df, i) {
+  plot(get_timeseries(df, i), cex = 0.1, xlab = "Timestamp", ylab = "Toll")
+  title(df$Country[i])
+}
+
+par(mfrow = c(2, 2))
+plot_timeseries(df, 1)
+plot_timeseries(df, 2)
+plot_timeseries(df, 3)
+plot_timeseries(df, 4)
+```
+
+# Part 2 New Content
+More dataset modifications
+```{r}
+col_dates = as.Date(gsub("X", "", names(df[10:ncol(df)])), format = "%m.%d.%y")
+names(df)[10:ncol(df)] = format(col_dates, "%Y-%m-%d")
+df$Toll = rowSums(df[10:ncol(df)])
+df$Population = df$Population / 1000000 # in million
+df$GDPperCapita = df$GDPperCapita / 1000 # in thousands
+df$GDP = df$GDP / 1000000000 # in billion
+df$MortalityRate = df$Toll / df$Population * 100
+```
+
+Full model
+```{r, warning=FALSE}
+full_model = glm(MortalityRate ~ InflationRate + UnemploymentRate + GDPperCapita + GDP + Population, data = df, family = poisson(link="log"))
+summary(full_model)
+```
+
+Scatterplot of dfbetas vs predictors
+```{r}
+library(car)
+vif(full_model)
+
+# png("dfbetas_vs_predictors.png")
+par(mfrow=c(2, 3))
+df.final = dfbetas(full_model)
+
+plot(df$InflationRate, df.final[, 2], xlab='InflationRate', ylab='DFBETAS')
+lines(lowess(df$InflationRate, df.final[, 2]), lwd=2, col='red')
+abline(h=0, lty='dotted')
+abline(h=-1, lty='dotted')
+abline(h=1, lty='dotted')
+title(main = "DFBETAS vs InflationRate")
+
+plot(df$UnemploymentRate, df.final[, 3], xlab='UnemploymentRate', ylab='DFBETAS')
+lines(lowess(df$UnemploymentRate, df.final[, 3]), lwd=2, col='red')
+abline(h=0, lty='dotted')
+abline(h=-1, lty='dotted')
+abline(h=1, lty='dotted')
+title(main = "DFBETAS vs UnemploymentRate")
+
+plot(df$GDPperCapita, df.final[, 4], xlab='GDPperCapita', ylab='DFBETAS')
+lines(lowess(df$GDPperCapita, df.final[, 4]), lwd=2, col='red')
+abline(h=0, lty='dotted')
+abline(h=-1, lty='dotted')
+abline(h=1, lty='dotted')
+title(main = "DFBETAS vs GDPperCapita")
+
+plot(df$GDP, df.final[, 5], xlab='GDP', ylab='DFBETAS')
+lines(lowess(df$GDP, df.final[, 5]), lwd=2, col='red')
+abline(h=0, lty='dotted')
+abline(h=-1, lty='dotted')
+abline(h=1, lty='dotted')
+title(main = "DFBETAS vs GDP")
+
+plot(df$Population, df.final[, 6], xlab='Population', ylab='DFBETAS')
+lines(lowess(df$Population, df.final[, 6]), lwd=2, col='red')
+abline(h=0, lty='dotted')
+abline(h=-1, lty='dotted')
+abline(h=1, lty='dotted')
+title(main = "DFBETAS vs Population")
+```
+
+Remove all influential points
+```{r}
+# remove all influential points
+dfbeta <- dfbetas(full_model)
+cutoff <- 1
+above.below.cutoff <- apply(abs(dfbeta), 1, max) > cutoff
+indices <- which(above.below.cutoff)
+remove <- c(indices)  
+df <- df[-remove, ]
+```
+
+
+Deviance residual plot
+```{r}
+residuals_dev = residuals(full_model, type = "deviance")
+plot(residuals_dev, ylab = "Deviance Residuals", xlab = "Fitted Values", main = "Deviance Resiauals vs Fitted", ylim=c(-12000, 12000))
+abline(h = 0, col = 'red')
+```
+
+```{r}
+# expected value != variance
+expected_values <- predict(full_model, type = "response")
+empirical_mean <- mean(df$MortalityRate)
+empirical_variance <- var(df$MortalityRate)
+2 * log(empirical_mean)
+log(empirical_variance)
+```
+
+Fitting the model after influential point removal
+```{r, warning=FALSE}
+second_model = glm(MortalityRate ~ InflationRate + UnemploymentRate + GDPperCapita + GDP + Population, data = df, family = poisson(link="log"))
+summary(second_model)
+expected_values <- predict(second_model, type = "response")
+empirical_mean <- mean(df$MortalityRate)
+empirical_variance <- var(df$MortalityRate)
+mean(expected_values)
+empirical_variance
+```
+
+Try negative binomial 1
+```{r, warning=FALSE}
+if (!require(MASS)) {
+    install.packages("MASS")
+    library(MASS)
+}
+
+# Fit a negative binomial regression model
+nb_model <- glm.nb(MortalityRate ~ InflationRate + UnemploymentRate + GDPperCapita + GDP + Population, data = df)
+
+summary(nb_model)
+vif(nb_model)
+```
+Coxbox the negative binomial 1
+```{r}
+boxcox_obj <- boxcox(nb_model, lambda = seq(-2, 2, by = 0.1))
+optimal_lambda <- boxcox_obj$x[which.max(boxcox_obj$y)]
+print(optimal_lambda)
+```
+
+```{r, warning=FALSE}
+df3 = df
+df3$MortalityRate = (df3$MortalityRate^optimal_lambda - 1) / optimal_lambda
+nb_model <- glm.nb(log(log(MortalityRate)) ~ log(InflationRate) + log(UnemploymentRate) + log(GDPperCapita) + log(GDP) + log(Population), data = df3)
+summary(nb_model)
+```
+
+Try negative binomial 2
+```{r, warning=FALSE}
+if (!require(glmmTMB)) {
+    install.packages("glmmTMB")
+    library(glmmTMB)
+}
+
+model <- glmmTMB(MortalityRate ~ InflationRate + UnemploymentRate + GDPperCapita + GDP + Population, family = nbinom2(link = "logit"), data = df)
+
+summary(model)
+vif(model)
+```
+
+Determine the boxcox optimal lambda
+
+```{r}
+boxcox_obj <- boxcox(second_model, lambda = seq(-2, 2, by = 0.1))
+optimal_lambda <- boxcox_obj$x[which.max(boxcox_obj$y)]
+title("Boxcox Log-Likelihood")
+```
+```{r}
+set.seed(144) # this is my lucky number
+indices <- sample(nrow(df))
+split_size <- ceiling(nrow(df) / 4)
+df$MortalityRate = (df$MortalityRate^optimal_lambda - 1) / optimal_lambda
+df$MortalityRate = df$MortalityRate
+
+df1 <- df[indices[1:split_size], ]
+df2 <- df[indices[(split_size + 1):(2 * split_size)], ]
+df3 <- df[indices[(2 * split_size + 1):(3 * split_size)], ]
+df4 <- df[indices[(3 * split_size + 1):nrow(df)], ]
+```
+
+```{r, warning=FALSE}
+second_model = glm(MortalityRate ~ InflationRate + UnemploymentRate + GDP + GDPperCapita, data = df1, family = poisson(link="log"))
+
+summary(second_model)
+expected_values <- predict(second_model, type = "response")
+empirical_mean <- mean(df1$MortalityRate)
+empirical_variance <- var(df1$MortalityRate)
+mean(expected_values)
+empirical_variance
+
+vif(second_model)
+```
+
+Cross validation visualizatoin
+```{r}
+final_model = second_model
+predicted <- predict(final_model, type = "response", newdata=df)
+
+plot(df$MortalityRate, col = "blue", pch = 16, main = "Cross Validation: Observed vs Predicted Values", ylab="Mortality Rate", xlab="Country Index")
+points(predicted, col = "red", lwd = 2)
+legend("topright", legend = c("Observed", "Predicted"), col = c("blue", "red"), lty = 1, lwd = 2)
+```
+
+
+Compute MSE of the model above
+```{r}
+predicted_values = predict(second_model, newdata = df2)
+squared_errors <- (df2$MortalityRate - predicted_values)^2
+mse1 <- mean(squared_errors)
+print(mse1)
+
+predicted_values = predict(second_model, newdata = df3)
+squared_errors <- (df3$MortalityRate - predicted_values)^2
+mse2 <- mean(squared_errors)
+print(mse2)
+
+predicted_values = predict(second_model, newdata = df4)
+squared_errors <- (df4$MortalityRate - predicted_values)^2
+mse3 <- mean(squared_errors)
+print(mse3)
+
+print(mse1 + mse2 + mse3)
+print((mse1 + mse2 + mse3) / 3)
+```
